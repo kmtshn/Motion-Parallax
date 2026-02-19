@@ -10,7 +10,858 @@
             padding: 0;
             overflow: hidden;
             background-color: #050505;
+            color: #fff;<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Head-Coupled Perspective Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #050505;
             color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.8);
+            z-index: 10;
+            transition: opacity 0.5s;
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+            text-align: center;
+            color: #00ffcc;
+        }
+        p {
+            font-size: 1rem;
+            margin-bottom: 30px;
+            text-align: center;
+            max-width: 80%;
+            line-height: 1.5;
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            background-color: #00ffcc;
+            color: #000;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(0, 255, 204, 0.4);
+            transition: transform 0.2s, background-color 0.2s;
+        }
+        button:hover {
+            transform: scale(1.05);
+            background-color: #33ffdb;
+        }
+        button:disabled {
+            background-color: #555;
+            color: #888;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        #webcam {
+            display: none;
+        }
+        #loading {
+            display: none;
+            margin-top: 15px;
+            color: #00ffcc;
+            font-size: 0.9rem;
+        }
+        
+        /* ゲーム用のUIスタイル */
+        #game-ui-header {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: none; /* 開始後に表示 */
+            justify-content: space-between;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #00ffcc;
+            z-index: 5;
+            text-shadow: 0 0 5px rgba(0, 255, 204, 0.5);
+            pointer-events: none;
+        }
+        #center-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 6;
+            display: none;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 30px;
+            border-radius: 15px;
+            border: 2px solid #00ffcc;
+            backdrop-filter: blur(5px);
+            width: 80%;
+            max-width: 400px;
+        }
+        #center-message h2 {
+            margin: 0;
+            font-size: 2.5rem;
+            color: #fff;
+            text-shadow: 0 0 10px #00ffcc;
+        }
+        #center-message p {
+            margin: 15px 0 0 0;
+            font-size: 1.1rem;
+            color: #ddd;
+            line-height: 1.4;
+            max-width: 100%;
+        }
+
+        /* 被弾時の赤いフラッシュ */
+        #damage-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(255, 0, 0, 0.5);
+            pointer-events: none;
+            z-index: 20;
+            opacity: 0;
+            transition: opacity 0.2s ease-out;
+        }
+    </style>
+    <!-- Three.js の読み込み -->
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.module.js",
+          "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/vision_bundle.mjs"
+        }
+      }
+    </script>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <h1>AR 3Dターゲット射撃</h1>
+        <p>インカメラを使用して顔をトラッキングし、3D空間を作り出します。<br><br><b>【遊び方】<br>指を「ピンチ＆リリース」して敵を倒せ！<br><span style="color:#ff3366;">敵が撃ってくる弾は、顔を「反対側」に動かして避けてください。被弾すると時間が減ります！</span></b></p>
+        <button id="start-btn">カメラを起動して開始</button>
+        <div id="loading">AIモデルを読み込み中...</div>
+    </div>
+
+    <!-- ゲーム用UI -->
+    <div id="game-ui-header">
+        <div id="level-text">LEVEL: 1</div>
+        <div id="time-text">TIME: 30</div>
+    </div>
+    <div id="center-message">
+        <h2 id="msg-title">GAME CLEAR</h2>
+        <p id="msg-sub">タップして次へ</p>
+    </div>
+    <div id="damage-overlay"></div>
+
+    <!-- トラッキング用カメラ（非表示） -->
+    <video id="webcam" autoplay playsinline></video>
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { FaceLandmarker, HandLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+
+        // --- ログのフィルタリング処理 ---
+        const originalConsoleError = console.error;
+        const originalConsoleWarn = console.warn;
+        console.error = function(...args) {
+            if (typeof args[0] === 'string' && args[0].includes('TensorFlow Lite XNNPACK delegate')) return;
+            originalConsoleError.apply(console, args);
+        };
+        console.warn = function(...args) {
+            if (typeof args[0] === 'string' && args[0].includes('TensorFlow Lite XNNPACK delegate')) return;
+            originalConsoleWarn.apply(console, args);
+        };
+
+        // --- DOM要素の取得 ---
+        const uiLayer = document.getElementById('ui-layer');
+        const startBtn = document.getElementById('start-btn');
+        const loadingText = document.getElementById('loading');
+        const video = document.getElementById('webcam');
+        const container = document.getElementById('canvas-container');
+        const gameUiHeader = document.getElementById('game-ui-header');
+        const levelText = document.getElementById('level-text');
+        const timeText = document.getElementById('time-text');
+        const centerMessage = document.getElementById('center-message');
+        const msgTitle = document.getElementById('msg-title');
+        const msgSub = document.getElementById('msg-sub');
+        const damageOverlay = document.getElementById('damage-overlay');
+
+        function showMessage(title, sub) {
+            msgTitle.innerText = title;
+            msgSub.innerHTML = sub;
+            centerMessage.style.display = 'block';
+        }
+        function hideMessage() {
+            centerMessage.style.display = 'none';
+        }
+
+        // 被弾時のフラッシュとペナルティ演出
+        function flashDamage() {
+            damageOverlay.style.opacity = '1';
+            setTimeout(() => {
+                damageOverlay.style.opacity = '0';
+            }, 300);
+        }
+
+        // --- 画面設定 ---
+        const SCREEN_W = 100;
+        let SCREEN_H = SCREEN_W * (window.innerHeight / window.innerWidth);
+        const BOX_DEPTH = 250; 
+
+        // --- Three.js セットアップ ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050505);
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 1000);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // --- 3D空間の作成（部屋） ---
+        const roomGroup = new THREE.Group();
+        scene.add(roomGroup);
+
+        const gridColor = 0x00ffcc;
+        const backDivisions = 20;
+        const sideDivisions = 40; 
+
+        const backGrid = new THREE.GridHelper(SCREEN_W, backDivisions, gridColor, gridColor);
+        backGrid.rotation.x = Math.PI / 2;
+        backGrid.position.z = -BOX_DEPTH;
+        backGrid.scale.z = SCREEN_H / SCREEN_W;
+        roomGroup.add(backGrid);
+
+        const bottomGrid = new THREE.GridHelper(SCREEN_W, sideDivisions, gridColor, gridColor);
+        bottomGrid.position.y = -SCREEN_H / 2;
+        bottomGrid.position.z = -BOX_DEPTH / 2;
+        bottomGrid.scale.z = BOX_DEPTH / SCREEN_W;
+        roomGroup.add(bottomGrid);
+
+        const topGrid = new THREE.GridHelper(SCREEN_W, sideDivisions, gridColor, gridColor);
+        topGrid.position.y = SCREEN_H / 2;
+        topGrid.position.z = -BOX_DEPTH / 2;
+        topGrid.scale.z = BOX_DEPTH / SCREEN_W;
+        roomGroup.add(topGrid);
+
+        const leftGrid = new THREE.GridHelper(SCREEN_H, sideDivisions, gridColor, gridColor);
+        leftGrid.rotation.z = Math.PI / 2;
+        leftGrid.position.x = -SCREEN_W / 2;
+        leftGrid.position.z = -BOX_DEPTH / 2;
+        leftGrid.scale.z = BOX_DEPTH / SCREEN_H;
+        roomGroup.add(leftGrid);
+
+        const rightGrid = new THREE.GridHelper(SCREEN_H, sideDivisions, gridColor, gridColor);
+        rightGrid.rotation.z = Math.PI / 2;
+        rightGrid.position.x = SCREEN_W / 2;
+        rightGrid.position.z = -BOX_DEPTH / 2;
+        rightGrid.scale.z = BOX_DEPTH / SCREEN_H;
+        roomGroup.add(rightGrid);
+
+        const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(SCREEN_W, SCREEN_H, BOX_DEPTH));
+        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffffff, opacity: 0.8, transparent: true }));
+        line.position.z = -BOX_DEPTH / 2;
+        roomGroup.add(line);
+
+        // ライティング
+        scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(0, 50, 50);
+        scene.add(dirLight);
+        const pointLight = new THREE.PointLight(0xff00cc, 1, 300);
+        pointLight.position.set(0, 0, -100);
+        scene.add(pointLight);
+
+
+        // --- ゲームの変数と設定 ---
+        const balls = []; // プレイヤーの弾
+        const enemyBullets = []; // 敵の弾
+        const GRAVITY = -0.15;
+        const BOUNCE = 0.9; 
+        const BALL_RADIUS = 3;
+
+        let currentLevel = 1;
+        let timeLeft = 0;
+        let gameState = 'init'; 
+        let lastTimeUpdate = 0;
+        let activeTargets = []; 
+        
+        let levelClearTimes = []; 
+        let levelStartTime = 0;   
+
+        // 敵の破棄処理用ユーティリティ
+        function cleanUpObject(obj) {
+            roomGroup.remove(obj);
+            obj.traverse((child) => {
+                if (child.isMesh) {
+                    child.geometry.dispose();
+                    child.material.dispose();
+                }
+            });
+        }
+
+        // 敵（ターゲット）を生成する関数：より敵らしいデザインに
+        function createTarget(position, behavior, attackInterval) {
+            const enemyGroup = new THREE.Group();
+            enemyGroup.position.copy(position);
+
+            const isBoss = (behavior === 'boss');
+            const maxHp = isBoss ? 5 : 1;
+            const radius = isBoss ? 16 : 10; // ボスは当たり判定も大きい
+
+            // コア（ボスの場合は巨大でトゲトゲのワイヤーフレームに）
+            const coreGeo = new THREE.IcosahedronGeometry(isBoss ? 10 : 6, isBoss ? 2 : 1);
+            const coreColor = (behavior === 'blink' || isBoss) ? 0x333333 : 0xff1133;
+            const coreMat = new THREE.MeshPhongMaterial({ color: coreColor, emissive: 0x550000, shininess: 100, wireframe: isBoss });
+            const core = new THREE.Mesh(coreGeo, coreMat);
+            enemyGroup.add(core);
+
+            // 周りを回るリング状の装飾（ボスはリングの数を増やす）
+            const rings = [];
+            const ringCount = isBoss ? 4 : 2;
+            for(let i=0; i<ringCount; i++) {
+                const ringGeo = new THREE.TorusGeometry(isBoss ? 14 + i*2 : 10, isBoss ? 0.8 : 0.5, 8, 24);
+                const ringColor = isBoss ? 0xaa00ff : 0xff0044; // ボスは禍々しい紫色
+                const ringMat = new THREE.MeshBasicMaterial({ color: ringColor, wireframe: true });
+                const ring = new THREE.Mesh(ringGeo, ringMat);
+                // ランダムな初期角度
+                ring.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+                enemyGroup.add(ring);
+                rings.push(ring);
+            }
+
+            roomGroup.add(enemyGroup);
+            
+            return {
+                mesh: enemyGroup,
+                coreMesh: core,
+                rings: rings,
+                type: behavior, 
+                radius: radius,
+                basePos: position.clone(),
+                
+                hp: maxHp,
+                maxHp: maxHp,
+                isInvincible: (behavior === 'blink' || behavior === 'boss'), 
+                timeOffset: (behavior === 'blink' || behavior === 'boss') ? 0 : Math.random() * 1000,
+                
+                // 攻撃関連のステータス
+                attackIntervalBase: attackInterval, // 攻撃頻度（ミリ秒）。Infinityは攻撃しない
+                nextAttackTime: performance.now() + 2000 + Math.random() * attackInterval,
+                attackState: 'idle', // idle, charging, firing
+                chargeStartTime: 0
+            };
+        }
+
+        // --- 各レベルの定義 ---
+        const levelsData = [
+            { level: 1, time: 30, initTargets: () => [ createTarget(new THREE.Vector3(0, 0, -120), 'none', Infinity) ] },
+            { level: 2, time: 50, initTargets: () => [ createTarget(new THREE.Vector3(-25, 15, -100), 'none', 4000), createTarget(new THREE.Vector3(25, -15, -150), 'none', 4000) ] },
+            { level: 3, time: 60, initTargets: () => [ createTarget(new THREE.Vector3(-30, 20, -120), 'none', 3000), createTarget(new THREE.Vector3(0, -20, -100), 'none', 3500), createTarget(new THREE.Vector3(30, 10, -150), 'none', 3000) ] },
+            { level: 4, time: 60, initTargets: () => [ createTarget(new THREE.Vector3(0, 25, -120), 'horizontal', 2500), createTarget(new THREE.Vector3(-25, 0, -120), 'vertical', 2500) ] },
+            { level: 5, time: 60, initTargets: () => [ createTarget(new THREE.Vector3(-20, 0, -130), 'blink', 2000), createTarget(new THREE.Vector3(20, 0, -130), 'blink', 2000) ] },
+            // ボス戦追加
+            { level: 6, time: 90, initTargets: () => [ createTarget(new THREE.Vector3(0, 0, -130), 'boss', 3000) ] }
+        ];
+
+        // レベル開始関数
+        function startLevel(levelNum) {
+            currentLevel = levelNum;
+            const levelInfo = levelsData[levelNum - 1];
+            timeLeft = levelInfo.time;
+            lastTimeUpdate = performance.now();
+            levelStartTime = performance.now(); 
+            
+            if (levelNum === 1) {
+                levelClearTimes = []; 
+            }
+            
+            levelText.innerText = `LEVEL: ${levelNum}`;
+            timeText.innerText = `TIME: ${timeLeft}`;
+            
+            // クリーンアップ
+            activeTargets.forEach(t => cleanUpObject(t.mesh));
+            balls.forEach(b => cleanUpObject(b.mesh));
+            enemyBullets.forEach(eb => cleanUpObject(eb.mesh));
+            activeTargets.length = 0;
+            balls.length = 0;
+            enemyBullets.length = 0;
+            
+            // 新しいターゲットを配置
+            activeTargets = levelInfo.initTargets();
+            
+            gameState = 'playing';
+            gameUiHeader.style.display = 'flex';
+        }
+
+        window.addEventListener('pointerdown', () => {
+            if (gameState === 'gameover' || gameState === 'clear') {
+                hideMessage();
+                startLevel(1); 
+            }
+        });
+
+
+        // プレイヤーがボールを投げる処理
+        function throwBall(position, velocity) {
+            if(gameState !== 'playing') return;
+
+            const geometry = new THREE.SphereGeometry(BALL_RADIUS, 16, 16);
+            const material = new THREE.MeshPhongMaterial({ color: 0x00ffcc, emissive: 0x005544, shininess: 100 }); 
+            const ball = new THREE.Mesh(geometry, material);
+            ball.position.copy(position);
+            roomGroup.add(ball);
+            
+            balls.push({ mesh: ball, velocity: velocity, createdAt: performance.now() });
+        }
+
+        // 手のポインター（カーソル）
+        const pointerGeo = new THREE.SphereGeometry(1.5, 16, 16);
+        const pointerMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, wireframe: true });
+        const pointerMesh = new THREE.Mesh(pointerGeo, pointerMat);
+        pointerMesh.visible = false;
+        roomGroup.add(pointerMesh);
+
+        // --- トラッキング用の変数 ---
+        let faceLandmarker, handLandmarker;
+        let runningMode = "VIDEO";
+        let lastVideoTime = -1;
+        
+        const DEFAULT_Z = 60; // 画面（Z=0）から顔までのデフォルト距離。弾が飛んでくる目標ラインにもなる。
+        let targetEyePos = new THREE.Vector3(0, 0, DEFAULT_Z);
+        let currentEyePos = new THREE.Vector3(0, 0, DEFAULT_Z);
+
+        let isPinching = false;
+        let previousHandPos = new THREE.Vector3();
+        let currentHandPos = new THREE.Vector3();
+        let targetHandPos = new THREE.Vector3();
+
+        // オフアクシス投影関数
+        function applyOffAxisProjection(camera, eyePosition, screenW, screenH, near, far) {
+            const z = Math.max(eyePosition.z, near);
+            const left   = (-screenW / 2 - eyePosition.x) * near / z;
+            const right  = ( screenW / 2 - eyePosition.x) * near / z;
+            const bottom = (-screenH / 2 - eyePosition.y) * near / z;
+            const top    = ( screenH / 2 - eyePosition.y) * near / z;
+
+            camera.projectionMatrix.makePerspective(left, right, top, bottom, near, far);
+            camera.position.copy(eyePosition);
+        }
+
+        // --- MediaPipe 初期化とカメラ起動 ---
+        async function initLandmarkers() {
+            try {
+                const filesetResolver = await FilesetResolver.forVisionTasks(
+                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+                );
+                const facePromise = FaceLandmarker.createFromOptions(filesetResolver, {
+                    baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`, delegate: "GPU" },
+                    outputFaceBlendshapes: false, runningMode: runningMode, numFaces: 1
+                });
+                const handPromise = HandLandmarker.createFromOptions(filesetResolver, {
+                    baseOptions: { modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`, delegate: "GPU" },
+                    runningMode: runningMode, numHands: 1
+                });
+                [faceLandmarker, handLandmarker] = await Promise.all([facePromise, handPromise]);
+                return true;
+            } catch (error) {
+                alert("AIモデルの読み込みに失敗しました。再読み込みしてください。");
+                return false;
+            }
+        }
+
+        async function enableCam() {
+            startBtn.disabled = true;
+            startBtn.innerText = "起動中...";
+            loadingText.style.display = "block";
+
+            const isModelLoaded = await initLandmarkers();
+            if (!isModelLoaded) return;
+
+            const constraints = { video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } } };
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                video.addEventListener("loadeddata", () => {
+                    uiLayer.style.opacity = "0";
+                    setTimeout(() => uiLayer.style.display = "none", 500);
+                    
+                    startLevel(1);
+                    renderLoop();
+                });
+            } catch (err) {
+                alert("カメラの許可が必要です。ブラウザの設定を確認してください。");
+                startBtn.disabled = false;
+                startBtn.innerText = "カメラを起動して開始";
+                loadingText.style.display = "none";
+            }
+        }
+
+        startBtn.addEventListener('click', enableCam);
+
+        // --- メイン描画ループ ---
+        function renderLoop() {
+            requestAnimationFrame(renderLoop);
+            const nowTime = performance.now();
+
+            // 1. トラッキング処理
+            if (faceLandmarker && video.readyState >= 2) {
+                if (lastVideoTime !== video.currentTime) {
+                    lastVideoTime = video.currentTime;
+                    
+                    // --- 顔のトラッキング ---
+                    const faceResults = faceLandmarker.detectForVideo(video, nowTime);
+                    if (faceResults.faceLandmarks && faceResults.faceLandmarks.length > 0) {
+                        const landmarks = faceResults.faceLandmarks[0];
+                        const point = landmarks[8];
+                        const eyeDist = Math.sqrt((landmarks[33].x - landmarks[263].x)**2 + (landmarks[33].y - landmarks[263].y)**2);
+                        
+                        const trackingScale = 1.5;
+                        const mappedX = (0.5 - point.x) * SCREEN_W * trackingScale;
+                        const mappedY = -(point.y - 0.5) * SCREEN_H * trackingScale;
+                        const mappedZ = DEFAULT_Z * (0.15 / eyeDist);
+
+                        targetEyePos.set(mappedX, mappedY, mappedZ);
+                    } else {
+                        targetEyePos.set(0, 0, DEFAULT_Z);
+                    }
+
+                    // --- 手のトラッキングと投げる動作 ---
+                    if (handLandmarker) {
+                        const handResults = handLandmarker.detectForVideo(video, nowTime);
+                        if (handResults.landmarks && handResults.landmarks.length > 0) {
+                            const landmarks = handResults.landmarks[0];
+                            const p8 = landmarks[8], p4 = landmarks[4], p9 = landmarks[9], p0 = landmarks[0];
+                            
+                            const handSize = Math.sqrt((p9.x - p0.x)**2 + (p9.y - p0.y)**2);
+                            const mappedZ = -20 + (handSize * 250);
+                            const trackingScale = 1.3;
+                            const mappedX = (0.5 - p8.x) * SCREEN_W * trackingScale;
+                            const mappedY = -(p8.y - 0.5) * SCREEN_H * trackingScale;
+                            
+                            targetHandPos.set(mappedX, mappedY, mappedZ);
+                            pointerMesh.visible = true;
+                            
+                            const pinchDist = Math.sqrt((p8.x - p4.x)**2 + (p8.y - p4.y)**2);
+                            
+                            if (pinchDist < 0.04) {
+                                if (!isPinching) {
+                                    isPinching = true;
+                                    pointerMesh.material.color.setHex(0xff3366);
+                                }
+                            } else {
+                                if (isPinching) {
+                                    isPinching = false;
+                                    pointerMesh.material.color.setHex(0x00ffcc);
+                                    
+                                    const velocity = new THREE.Vector3().subVectors(targetHandPos, previousHandPos);
+                                    velocity.multiplyScalar(0.4);
+                                    velocity.z -= 2.5;
+                                    velocity.clampLength(0, 8);
+                                    
+                                    throwBall(currentHandPos.clone(), velocity);
+                                }
+                            }
+                        } else {
+                            pointerMesh.visible = false;
+                            isPinching = false;
+                        }
+                    }
+                }
+            }
+
+            // 座標の補間（LERP）
+            currentEyePos.lerp(targetEyePos, 0.15);
+            if (pointerMesh.visible) {
+                previousHandPos.copy(currentHandPos);
+                currentHandPos.lerp(targetHandPos, 0.4);
+                pointerMesh.position.copy(currentHandPos);
+            }
+
+            // --- ゲームの進行管理 ---
+            if (gameState === 'playing') {
+                if (nowTime - lastTimeUpdate >= 1000) {
+                    timeLeft--;
+                    lastTimeUpdate = nowTime;
+                    timeText.innerText = `TIME: ${Math.max(0, timeLeft)}`;
+                    
+                    if (timeLeft <= 0) {
+                        gameState = 'gameover';
+                        showMessage("TIME UP", "画面をタップして最初からリトライ");
+                    }
+                }
+
+                if (activeTargets.length === 0) {
+                    const clearTime = ((nowTime - levelStartTime) / 1000).toFixed(2);
+                    levelClearTimes.push(clearTime);
+
+                    if (currentLevel < levelsData.length) {
+                        gameState = 'nextLevel';
+                        showMessage(`LEVEL ${currentLevel} CLEAR!`, `タイム: ${clearTime}秒<br>次のレベルへ進みます...`);
+                        setTimeout(() => {
+                            if (gameState === 'nextLevel') {
+                                hideMessage();
+                                startLevel(currentLevel + 1);
+                            }
+                        }, 3000); 
+                    } else {
+                        gameState = 'clear';
+                        let resultHtml = "全ステージ完全制覇おめでとうございます！！！<br><br><div style='text-align: left; display: inline-block;'>";
+                        let totalTime = 0;
+                        levelClearTimes.forEach((time, index) => {
+                            resultHtml += `Stage ${index + 1} : ${time} 秒<br>`;
+                            totalTime += parseFloat(time);
+                        });
+                        resultHtml += `</div><br><br><b style='color: #00ffcc; font-size: 1.3rem;'>TOTAL : ${totalTime.toFixed(2)} 秒</b><br><br>画面タップで最初から遊べます`;
+                        showMessage("ALL CLEAR!!!", resultHtml);
+                    }
+                }
+            }
+
+            // --- ターゲットの更新・アニメーション・攻撃ロジック ---
+            const timeSec = nowTime / 1000;
+            activeTargets.forEach(target => {
+                
+                // --- 1. 移動パターン ---
+                if (target.type === 'horizontal') {
+                    target.mesh.position.x = target.basePos.x + Math.sin(timeSec * 2 + target.timeOffset) * 30;
+                } else if (target.type === 'vertical') {
+                    target.mesh.position.y = target.basePos.y + Math.sin(timeSec * 2 + target.timeOffset) * 20;
+                } else if (target.type === 'boss') {
+                    // ボスは8の字を描くように複雑に動き回る
+                    target.mesh.position.x = target.basePos.x + Math.sin(timeSec * 1.5) * 35;
+                    target.mesh.position.y = target.basePos.y + Math.sin(timeSec * 3.0) * 15;
+                }
+
+                // --- 2. 点滅（無敵）パターン ---
+                if (target.type === 'blink' || target.type === 'boss') {
+                    const cycle = (timeSec + target.timeOffset) % 3;
+                    const isBoss = (target.type === 'boss');
+                    
+                    if (cycle < 1) { // 1秒間だけ弱点露出
+                        target.isInvincible = false;
+                        target.coreMesh.material.color.setHex(0xffff00); // 黄色（弱点）
+                        target.rings.forEach(r => r.material.color.setHex(0xffff00));
+                    } else { // 2秒間は無敵
+                        target.isInvincible = true;
+                        target.coreMesh.material.color.setHex(isBoss ? 0x220033 : 0x333333); // ボスは暗い紫、他はグレー
+                        target.rings.forEach(r => r.material.color.setHex(isBoss ? 0x660099 : 0x555555));
+                    }
+                }
+
+                // --- 3. 攻撃ロジック（予備動作チャージ付き） ---
+                if (gameState === 'playing' && target.attackIntervalBase !== Infinity) {
+                    
+                    if (target.attackState === 'idle' && nowTime > target.nextAttackTime) {
+                        // 攻撃準備（チャージ）開始
+                        target.attackState = 'charging';
+                        target.chargeStartTime = nowTime;
+                        
+                    } else if (target.attackState === 'charging') {
+                        // 【チャージ中のモーション】
+                        // リングが高速回転し、コアが脈動して膨張する
+                        target.rings.forEach((r, idx) => {
+                            r.rotation.x += 0.2 * (idx%2==0 ? 1 : -1);
+                            r.rotation.y += 0.2 * (idx%2==0 ? -1 : 1);
+                        });
+                        
+                        const chargeDuration = 800; // チャージ時間（ミリ秒）
+                        const chargeRatio = (nowTime - target.chargeStartTime) / chargeDuration;
+                        
+                        // コアを膨らませて危険を知らせる
+                        const pulseScale = 1.0 + Math.sin(chargeRatio * Math.PI) * 0.6;
+                        target.coreMesh.scale.setScalar(pulseScale);
+                        
+                        if (chargeRatio >= 1) {
+                            target.attackState = 'firing'; // 発射状態へ
+                        }
+                        
+                    } else if (target.attackState === 'firing') {
+                        // スケールを元に戻す
+                        target.coreMesh.scale.setScalar(1); 
+                        
+                        // 弾の発射（ボスは3発同時に撃つ）
+                        const bulletsToFire = (target.type === 'boss') ? 3 : 1;
+                        
+                        for (let bIdx = 0; bIdx < bulletsToFire; bIdx++) {
+                            // ボスが複数発撃つ場合は左右に散らす
+                            let targetX = (Math.random() > 0.5 ? -25 : 25) + (Math.random() * 20 - 10);
+                            
+                            const startPos = target.mesh.position.clone();
+                            const velocity = new THREE.Vector3(targetX - startPos.x, 0 - startPos.y, DEFAULT_Z - startPos.z)
+                                                      .normalize().multiplyScalar(2.8); // 弾のスピード
+
+                            const bGeo = new THREE.SphereGeometry(3.5, 16, 16);
+                            const bMat = new THREE.MeshBasicMaterial({ color: 0xff0044 });
+                            const bMesh = new THREE.Mesh(bGeo, bMat);
+                            bMesh.position.copy(startPos);
+                            roomGroup.add(bMesh);
+
+                            enemyBullets.push({ mesh: bMesh, velocity: velocity, isActive: true });
+                        }
+
+                        // 攻撃完了、次の攻撃までのクールダウンを設定
+                        target.attackState = 'idle';
+                        target.nextAttackTime = nowTime + target.attackIntervalBase + Math.random() * 1500;
+                    }
+                }
+                
+                // チャージ中以外の通常の回転アニメーション
+                if (target.attackState !== 'charging') {
+                    target.rings.forEach((r, idx) => {
+                        r.rotation.x += 0.05 * (idx%2==0 ? 1 : -1);
+                        r.rotation.y += 0.05 * (idx%2==0 ? -1 : 1);
+                    });
+                    target.coreMesh.rotation.y -= 0.02;
+                }
+            });
+
+            // --- 敵の弾（攻撃）の処理と回避（被弾）判定 ---
+            for (let i = enemyBullets.length - 1; i >= 0; i--) {
+                const eb = enemyBullets[i];
+                eb.mesh.position.add(eb.velocity);
+                
+                if (eb.mesh.position.z > DEFAULT_Z - 15 && eb.isActive) {
+                    eb.isActive = false; 
+                    
+                    if (Math.abs(eb.mesh.position.x - currentEyePos.x) < 20) {
+                        if (gameState === 'playing') {
+                            flashDamage();
+                            timeLeft -= 5; 
+                            timeText.innerText = `TIME: ${Math.max(0, timeLeft)}`;
+                        }
+                    }
+                }
+                
+                if (eb.mesh.position.z > DEFAULT_Z + 30) {
+                    cleanUpObject(eb.mesh);
+                    enemyBullets.splice(i, 1);
+                }
+            }
+
+
+            // --- プレイヤーのボールの物理演算・衝突判定 ---
+            for(let i = balls.length - 1; i >= 0; i--) {
+                const b = balls[i];
+
+                if (nowTime - b.createdAt > 5000) {
+                    cleanUpObject(b.mesh);
+                    balls.splice(i, 1);
+                    continue; 
+                }
+
+                b.velocity.y += GRAVITY;
+                b.mesh.position.add(b.velocity);
+                
+                if (b.mesh.position.x > SCREEN_W/2 - BALL_RADIUS) {
+                    b.mesh.position.x = SCREEN_W/2 - BALL_RADIUS; b.velocity.x *= -BOUNCE; 
+                } else if (b.mesh.position.x < -SCREEN_W/2 + BALL_RADIUS) {
+                    b.mesh.position.x = -SCREEN_W/2 + BALL_RADIUS; b.velocity.x *= -BOUNCE; 
+                }
+                if (b.mesh.position.y > SCREEN_H/2 - BALL_RADIUS) {
+                    b.mesh.position.y = SCREEN_H/2 - BALL_RADIUS; b.velocity.y *= -BOUNCE; 
+                } else if (b.mesh.position.y < -SCREEN_H/2 + BALL_RADIUS) {
+                    b.mesh.position.y = -SCREEN_H/2 + BALL_RADIUS; b.velocity.y *= -BOUNCE; 
+                }
+                if (b.mesh.position.z < -BOX_DEPTH + BALL_RADIUS) {
+                    b.mesh.position.z = -BOX_DEPTH + BALL_RADIUS; b.velocity.z *= -BOUNCE; 
+                } else if (b.mesh.position.z > 0 - BALL_RADIUS) {
+                    b.mesh.position.z = 0 - BALL_RADIUS; b.velocity.z *= -BOUNCE; 
+                }
+
+                if (gameState === 'playing') {
+                    for (let j = activeTargets.length - 1; j >= 0; j--) {
+                        const target = activeTargets[j];
+                        
+                        // ボスのようにスケールが変更されている場合は当たり判定半径も考慮する
+                        const currentRadius = target.radius * target.mesh.scale.x;
+                        const dist = b.mesh.position.distanceTo(target.mesh.position);
+                        
+                        if (dist < BALL_RADIUS + currentRadius) {
+                            if (target.isInvincible) {
+                                // 無敵時は跳ね返す
+                                const normal = new THREE.Vector3().subVectors(b.mesh.position, target.mesh.position).normalize();
+                                b.velocity.reflect(normal).multiplyScalar(BOUNCE);
+                                b.mesh.position.add(normal.multiplyScalar((BALL_RADIUS + currentRadius) - dist));
+                            } else {
+                                // 弱点にヒット！
+                                target.hp--;
+                                
+                                if (target.hp <= 0) {
+                                    // HP0で撃破
+                                    cleanUpObject(target.mesh);
+                                    activeTargets.splice(j, 1);
+                                } else {
+                                    // HPが残っている場合（ボス）は、ダメージ演出として少し縮小する
+                                    const damageScale = 0.5 + (target.hp / target.maxHp) * 0.5;
+                                    target.mesh.scale.setScalar(damageScale);
+                                }
+                                
+                                // 当たったボールを消去
+                                cleanUpObject(b.mesh);
+                                balls.splice(i, 1);
+                                break; 
+                            }
+                        }
+                    }
+                }
+            }
+
+            // オフアクシス投影を適用
+            applyOffAxisProjection(camera, currentEyePos, SCREEN_W, SCREEN_H, 1, 2000);
+            renderer.render(scene, camera);
+        }
+
+        // --- リサイズ処理 ---
+        window.addEventListener('resize', () => {
+            SCREEN_H = SCREEN_W * (window.innerHeight / window.innerWidth);
+            
+            backGrid.scale.z = SCREEN_H / SCREEN_W;
+            bottomGrid.position.y = -SCREEN_H / 2;
+            topGrid.position.y = SCREEN_H / 2;
+            leftGrid.scale.z = BOX_DEPTH / SCREEN_H;
+            leftGrid.position.x = -SCREEN_W / 2;
+            rightGrid.scale.z = BOX_DEPTH / SCREEN_H;
+            rightGrid.position.x = SCREEN_W / 2;
+
+            roomGroup.remove(line);
+            const newEdges = new THREE.EdgesGeometry(new THREE.BoxGeometry(SCREEN_W, SCREEN_H, BOX_DEPTH));
+            const newLine = new THREE.LineSegments(newEdges, new THREE.LineBasicMaterial({ color: 0xffffff, opacity: 0.8, transparent: true }));
+            newLine.position.z = -BOX_DEPTH / 2;
+            roomGroup.add(newLine);
+            
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             touch-action: none;
         }
