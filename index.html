@@ -183,7 +183,7 @@
         leftGrid.rotation.z = Math.PI / 2;
         leftGrid.position.x = -SCREEN_W / 2;
         leftGrid.position.z = -BOX_DEPTH / 2;
-        leftGrid.scale.x = BOX_DEPTH / SCREEN_H;
+        leftGrid.scale.z = BOX_DEPTH / SCREEN_H;
         roomGroup.add(leftGrid);
 
         // 右の壁
@@ -191,7 +191,7 @@
         rightGrid.rotation.z = Math.PI / 2;
         rightGrid.position.x = SCREEN_W / 2;
         rightGrid.position.z = -BOX_DEPTH / 2;
-        rightGrid.scale.x = BOX_DEPTH / SCREEN_H;
+        rightGrid.scale.z = BOX_DEPTH / SCREEN_H;
         roomGroup.add(rightGrid);
 
         // 浮遊するオブジェクト（奥行き感を強調するため）
@@ -381,9 +381,9 @@
             backGrid.scale.z = SCREEN_H / SCREEN_W;
             bottomGrid.position.y = -SCREEN_H / 2;
             topGrid.position.y = SCREEN_H / 2;
-            leftGrid.scale.x = BOX_DEPTH / SCREEN_H;
+            leftGrid.scale.z = BOX_DEPTH / SCREEN_H;
             leftGrid.position.x = -SCREEN_W / 2;
-            rightGrid.scale.x = BOX_DEPTH / SCREEN_H;
+            rightGrid.scale.z = BOX_DEPTH / SCREEN_H;
             rightGrid.position.x = SCREEN_W / 2;
 
             // 枠線の再生成
